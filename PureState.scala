@@ -112,6 +112,7 @@ object RNG {
 }
 
 import State._
+import folds._
 
 case class State[S, +A](runState: S => (A, S)) {
     def map[B](f: A => B): State[S, B] =
@@ -122,11 +123,31 @@ case class State[S, +A](runState: S => (A, S)) {
         val (a, s1) = runState(s)
         f(a).runState(s1)
     })
+    
+    
 }
 
 object State {
     def unit[S, A](a: A): State[S, A] =
         State(s => (a, s))
+
+    def sequence[S,A](ls: List[State[S, A]]): State[S, List[A]] = 
+        ls.foldRight(unit[S, List[A]](List()))( (nxt, acc) => State{
+            state: S => {
+                val (a1, s1) = acc.runState(state)
+                val (a2, s2) = nxt.runState(s1)
+                (::(a2, a1), s2)
+            }
+    })
+
+    def get[S]: State[S, S] = State{
+        s: S => (s, s)
+    } 
+
+    def set[S]: (S => State[S, _]) = { 
+        s: S => State{ _ => ((), s) } 
+    }
+
 }
 
 object Pure {
