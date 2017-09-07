@@ -1,67 +1,126 @@
-import java.util.concurrent._
+import java.util.concurrent._, ExecutorService._
 
 
-
-trait Par {
-
-type Par[A] = ExecutorService => Future[A]
-//The model of Par is a function which takes an executor service (lets us submit
-//a callable i.e. parallel computation which returns a result) and returns a future.
-//It is essentially 'val x: Future[A] = callable.execute();'
-
-case class UnitFuture[A](a: A) extends Future[A]{
-    def get: A 
-        = a
-    def get(timeout: Long, unit: TimeUnit): A 
-        = a
-    def cancel(evenIfRunning: Boolean): Boolean 
-        = false 
-    def isCancelled 
-        = false 
-    def isDone
-        = true
+object folds{
+  def foldLeft[A,B](l: List[A], z: B)(f: (B, A) => B) : B = l match {
+    case Nil => z
+    case ::(x, xs) => foldLeft(xs, f (z, x)) (f)
+  }
+  def foldRight[A,B](l: List[A], z: B)(f: (A, B) => B): B = l match {
+    case Nil => z
+    case ::(x, xs) =>  f(x, foldRight(xs, z)(f))
+  }
 }
 
-// map2 combines the results of two parallel computations with a binary function.
-def map2[A, B, C](a: Par[A], b: Par[B])(f: (A, B) => C): Par[C]
-    = { (exec: ExecutorService) => {
-        val ares = run(exec)(a) 
-        val bres = run(exec)(b)
-        UnitFuture(f(ares.get, bres.get))
-    } }
+import folds._
+import scala.List
+import List._
+import scala.collection.immutable.List._
+import language.implicitConversions
 
-// * LAZY * //
+// trait ExecutorService {
+//   def submit[A](a: Callable[A]): Future[A]
+// }
+// trait Future[A] {
+//   def get: A
+//   def get(timeout: Long, unit: TimeUnit): A
+//   def cancel(evenIfRunning: Boolean): Boolean
+//   def isDone: Boolean
+//   def isCancelled: Boolean
+// }
 
-//Fork spawns an unevaluated parallel computation. The parallel computation will not be executed until forced by run.
-def fork[A](a: => Par[A]): Par[A]
-    = {(exec: ExecutorService) => run(exec)(a)}
-//Async instantiates a lazy Par 
-def async[A](a: => A): Par[A] 
-    = fork(unit(a))
+object Par {
+    type ExecutorService = java.util.concurrent.ExecutorService
+    type Future[A] = java.util.concurrent.Future[A]
+    type Par[A] = ExecutorService => Future[A]
 
-def asyncF[A, B](f: A => B): A => Par[B]
-    = { (a: A) => fork(unit(f(a))) }
+    case class UnitFuture[A](a: A) extends Future[A]{
+        def get: A 
+            = a
+        def get(timeout: Long, unit: TimeUnit): A 
+            = a
+        def cancel(evenIfRunning: Boolean): Boolean 
+            = false 
+        def isCancelled 
+            = false 
+        def isDone
+            = true
+    }
 
-// * STRICT * //
+    // * LAZY * //
 
-// unit injects a constant into a parallel computation.
-def unit[A](a: A): Par[A]
-    = { (exec: ExecutorService) => UnitFuture(a)}
-    // = { s: ExecutorService => Future(a) }
+    def fork[A](a: => Par[A]): Par[A]
+        = {(exec: ExecutorService) => exec.submit(new Callable[A] {     // Submits 1st callable 
+            def call: A = a(exec).get // a(exec) is also a Future[A]    // Submits 2nd callable
+        }): Future[A]}
+    //Async instantiates a lazy Par (unit)
+    def async[A](a: => A): Par[A] 
+        = fork(unit(a))
 
-// run will strictly evaluate a parallel computation, and return a value
-def run[A](s: ExecutorService)(a: Par[A]): Future[A] 
-    = a(s)
+    def asyncF[A, B](f: A => B): A => Par[B]
+        = { (a: A) => fork(unit(f(a))) }
 
-def product[A, B](fa: Par[A], fb: Par[B]): Par[(A,B)]
-    = { (exec: ExecutorService) => UnitFuture(fa(exec).get, fb(exec).get) }
+    // * STRICT * //
 
-def map[A, B](fa: Par[A])(f: A => B): Par[B]
-    = { (exec: ExecutorService) => UnitFuture(f (fa(exec).get) )}
+    // unit injects a constant into a parallel computation.
+    def unit[A](a: A): Par[A]
+        = { (exec: ExecutorService) => UnitFuture(a)}
+        // = { s: ExecutorService => Future(a) }
 
-def parMap[A, B](l: List[A])(f: A => B): Par[List[B]]
-    = l.map(asyncF(f)) 
+    // run will strictly evaluate a parallel computation, and return a value
+    def run[A](s: ExecutorService)(a: Par[A]): Future[A] 
+        = a(s)
 
+    def product[A, B](fa: Par[A], fb: Par[B]): Par[(A,B)]
+        = { (exec: ExecutorService) => UnitFuture(fa(exec).get, fb(exec).get) }
+
+    def map[A, B](fa: Par[A])(f: A => B): Par[B]
+        = { (exec: ExecutorService) => UnitFuture(f (fa(exec).get) )}
+
+    // map2 combines the results of two parallel computations with a binary function.
+    def map2[A, B, C](a: Par[A], b: Par[B])(f: (A, B) => C): Par[C]
+        = { (exec: ExecutorService) => {
+            val ares = run(exec)(a) 
+            val bres = run(exec)(b)
+            UnitFuture(f(ares.get, bres.get))
+        } }
+
+    //Map an async lazy function over each element
+    def parMap[A, B](l: List[A])(f: A => B): Par[List[B]]
+        = fork(sequence(l.map(asyncF(f))))
+
+    def sequence[A](l: List[Par[A]]): Par[List[A]] 
+        = foldRight(l, async(List()): Par[List[A]] )((parA, parLA) => {(exec: ExecutorService) => 
+            UnitFuture(::(parA(exec).get, parLA(exec).get))
+        })
+
+    def parFilter[A](l: List[A])(f: A => Boolean): Par[List[A]]
+        = {
+            val pars: List[Par[List[A]]] 
+                = l.map(asyncF( (a: A) => if(f(a)) List(a) else List() )) 
+            val swap: Par[List[List[A]]] = sequence(pars)
+            map(swap)((ls: List[List[A]]) => ls.flatten)
+        }
+    def choice[A](a: Par[Boolean])(ifTrue: Par[A], ifFalse:Par[A]): Par[A]
+        = {
+            
+        }
+}
+
+object Main extends App {
+    import Par._
+    val es = Executors.newFixedThreadPool(5)
+    val ls = List(1,2,3,4,5)
+    // for {
+    //     i <- ls 
+    // } yield run(es)(async(println(i)))
+    //  for {
+    //     i <- ls 
+    // } yield run(es)(unit(println(i)))
+    run(es)(parMap(ls)(println(_)))
+    // println(s)
+    val res = run(es)(async(println()))
+    
 }
 
 
