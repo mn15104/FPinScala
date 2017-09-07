@@ -95,16 +95,21 @@ object Par {
         })
 
     def parFilter[A](l: List[A])(f: A => Boolean): Par[List[A]]
-        = {
-            val pars: List[Par[List[A]]] 
+        = { val pars: List[Par[List[A]]] 
                 = l.map(asyncF( (a: A) => if(f(a)) List(a) else List() )) 
             val swap: Par[List[List[A]]] = sequence(pars)
             map(swap)((ls: List[List[A]]) => ls.flatten)
         }
-    def choice[A](a: Par[Boolean])(ifTrue: Par[A], ifFalse:Par[A]): Par[A]
-        = {
-            
+    def choiceN[A](a: Par[Int])(choices: List[Par[A]]): Par[A]
+        = { (exec: ExecutorService) => { val i = a(exec).get
+                                         choices(i)(exec)}
         }
+    def join[A](a: Par[Par[A]]): Par[A]
+        = { (exec: ExecutorService) => { ((map(a)(_(exec)))(exec)).get  }}
+
+    def flatMap[A, B](a: Par[A])(f: A => Par[B]): Par[B]
+        = { (exec: ExecutorService) => {    val as: A = (a(exec).get)
+                                            (f(as))(exec)}}
 }
 
 object Main extends App {
