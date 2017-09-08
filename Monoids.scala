@@ -1,4 +1,6 @@
-// Type Class
+import Parallelism.Par._
+import scala.language.implicitConversions
+import java.util.concurrent._, ExecutorService._
 trait Monoid[A] {
     def mappend(a1: A, a2: A): A 
     def mempty: A 
@@ -6,40 +8,62 @@ trait Monoid[A] {
         as.foldRight(a.mempty)((bm, am) => a.mappend(bm, am))
     def foldMap[A,B](as: List[A], m: Monoid[B])(f:A => B): B =
         as.foldRight(m.mempty)((a:A, b:B) => m.mappend(b, f(a)))
+    def mconcatV[A ](as: List[A], m: Monoid[A]): A = {
+        if(as.isEmpty)
+            m.mempty
+        else if(as.length == 1)
+            as(0)
+        else{
+            val tuple = as.splitAt(as.length/2)
+            m.mappend(as(0), as(1))
+        } 
+    }
 }
-
 sealed trait WC
 case class Stub(chars: String) extends WC
 case class Part(lStub: String, words: Int, rStub: String) extends WC
 
 object WC {
-    implicit val wcMonoid: Monoid[WC] = new Monoid[WC]{
+    // Type Class
+    val exec: ExecutorService = Executors.newFixedThreadPool(5)
+    type ExecutorService = java.util.concurrent.ExecutorService
+    
+    implicit class wcMonoid(wc: WC) extends Monoid[WC]{
         def mappend(a: WC, b: WC): WC = (a,b) match {
-            case (Part(l1, w1, r1), Part(l2,w2,r2)) =>
-                if(r1.isEmpty && l2.isEmpty) 
-                    Part(l1 ++ r1 ++ l2, w2+w1, r2)
-                else 
-                    Part(l1 ++ r1 ++ l2, w2+w1+1, r2)
-            case (Stub(s), Part(l2,w2,r2))      => Part(s+l2, w2, r2)
-            case (Part(l1, w1, r1), Stub(s))    => Part(l1, w1, r1++s)
-            case (Stub(s1), Stub(s2))           => Part(s1++s2, 0, "")
+        case (Part(l1, w1, r1), Part(l2,w2,r2)) =>
+            if(r1.isEmpty && l2.isEmpty) 
+                Part(l1 ++ r1 ++ l2, w2+w1, r2)
+            else 
+                Part(l1 ++ r1 ++ l2, w2+w1+1, r2)
+        case (Stub(s), Part(l2,w2,r2))      => Part(s+l2, w2, r2)
+        case (Part(l1, w1, r1), Stub(s))    => Part(l1, w1, r1++s)
+        case (Stub(s1), Stub(s2))           => Stub(s1 + s2)
         }
         def mempty: WC = Stub("")
+    }    
+    // Change Monoid[m] to Monoid[Par[m]]
+    implicit def monoidToPar[A](m: Monoid[A]): Monoid[Par[A]] = new Monoid[Par[A]]{
+        def mappend(a1: Par[A], a2: Par[A]) = {
+            map2(a1, a2)(m.mappend)
+        }
+        def mempty = async(m.mempty)
     }
-    def countWords(s: String) = {
-        val split = s.split(" ")
-        val words = if (s(s.length-1) == " " && s(0) == " ") 
-        Part(split(0), split.length - 2, split(split.length-1))
+    // Change string to list of WC
+    def strTo(s: String): List[WC] = {
+        s.map(c => {if (c == ' ') Part("", 0, "")
+                         else Stub(c.toString)} ).toList
     }
-    
-    def reccountWords(s:String) : WC = {
-        val str = Stub(s)
-        wcMonoid.mappend(countWords(s.substring(0, s.length()/2)), countWords(s.substring(s.length()/2)))
+    def func(wc: WC): Par[WC] = {
+        val parWC = wc.foldMap(strTo("nothing to see here then"), 
+                            monoidToPar(wcMonoid(wc)))(x => unit(x))
+        println(parWC(exec))
+        parWC
     }
 }
 
 object Main extends App{
-    println(WC.countWords("hi there man "))
+    import WC._
+    println(func(Stub("")))
 }
 
 trait Maybe[+A]
