@@ -52,7 +52,7 @@ object Par {
     // * LAZY * //
 
     def fork[A](a: => Par[A]): Par[A]
-        = {(exec: ExecutorService) => println(java.lang.Thread.activeCount()); exec.submit(new Callable[A] {     // Submits 1st callable 
+        = {(exec: ExecutorService) =>  exec.submit(new Callable[A] {     // Submits 1st callable 
             def call: A = a(exec).get // a(exec) is also a Future[A]    // Submits 2nd callable
             
         }): Future[A]}
@@ -85,7 +85,7 @@ object Par {
         = { (exec: ExecutorService) => {
             val ares = run(exec)(a) 
             val bres = run(exec)(b)
-            println(java.lang.Thread.activeCount())
+
             UnitFuture(f(ares.get, bres.get))
         } }
 
