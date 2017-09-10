@@ -32,6 +32,16 @@ object ProductMonoid {
     }
 }
 
+object FunctionMonoid{
+    def functionMonoid[A,B](b: Monoid[B]): Monoid[A => B] = new Monoid[A => B]{
+        def mappend(f: (A => B), g: (A => B)): (A => B) = { 
+            (a: A) => b.mappend(f(a), g(a)) 
+        }
+        def mempty: (A => B)
+            = (a: A) => b.mempty
+    }
+}
+
 trait Monoid2[A] {
     def mappend(a1: A, a2: A): A 
     def mempty: A 
@@ -168,6 +178,9 @@ object WC {
 
 object Main extends App{
     import WC._
+    import Maybe._
+    def monoid[A](implicit a: Monoid[A]): Monoid[A] = a
+    Just("hi").mempty
 }
 
 trait Foldable[F[_]]{
